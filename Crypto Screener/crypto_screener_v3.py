@@ -6,20 +6,20 @@ from datetime import datetime
 import time
 
 # === Title === #
-st.title("🚀 Crypto Momentum Screener (Top 20 by Market Cap)")
+st.title("🚀 Crypto Momentum Screener (Top 5 by Market Cap)")
 
 # === Timestamp === #
 st.write(f"🕓 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 # === Functions === #
 
-# Get Top 20 coins by market cap
-def get_top_20_coins():
+# Get Top 5 coins
+def get_top_5_coins():
     url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {
         'vs_currency': 'usd',
         'order': 'market_cap_desc',
-        'per_page': 20,
+        'per_page': 5,
         'page': 1,
         'sparkline': False
     }
@@ -34,17 +34,20 @@ def get_top_20_coins():
     coin_ids = [coin['id'] for coin in data]
     return coin_ids
 
-# Fetch historical prices for each coin
+# Fetch historical prices
 def fetch_prices(coin_id):
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days=30&interval=daily"
-    response = requests.get(url)
-    if response.status_code != 200:
-        return None
-    data = response.json()
-    prices = [price[1] for price in data['prices']]
-    if len(prices) < 30:
-        return None
-    return prices
+    tries = 0
+    while tries < 3:
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            prices = [price[1] for price in data['prices']]
+            if len(prices) >= 30:
+                return prices
+        tries += 1
+        time.sleep(2)
+    return None
 
 # Calculate RSI
 def calculate_rsi(prices, period=14):
@@ -67,50 +70,41 @@ def calculate_rsi(prices, period=14):
 
     return rsi
 
-# Load data
+# Load Data
 @st.cache_data
 def load_data():
-    top_coins = get_top_20_coins()
+    coins = get_top_5_coins()
     price_data = {}
     failed_coins = []
 
-    for coin in top_coins:
-        success = False
-        for attempt in range(3):
-            prices = fetch_prices(coin)
-            if prices:
-                price_data[coin] = prices
-                success = True
-                break
-            time.sleep(1.5)
-        if not success:
+    for coin in coins:
+        prices = fetch_prices(coin)
+        if prices:
+            price_data[coin] = prices
+        else:
             failed_coins.append(coin)
 
     return price_data, failed_coins
 
-# === Load Data === #
+# === Load === #
 price_data, failed_coins = load_data()
 
 if failed_coins:
     st.warning(f"⚠️ Failed to load data for {len(failed_coins)} coins:")
     st.write(failed_coins)
 
-# === Sidebar Selections === #
+# === Sidebar Selection === #
 period_choice = st.selectbox(
-    "Select Percentage Change Period to Analyze:",
+    "Select % Change Period to Analyze:",
     ("7 Days", "14 Days", "30 Days")
 )
 
-period_map = {
-    "7 Days": 7,
-    "14 Days": 14,
-    "30 Days": 30
-}
+period_map = {"7 Days": 7, "14 Days": 14, "30 Days": 30}
 selected_period = period_map[period_choice]
 
-show_only_uptrend = st.checkbox("✅ Show Only Coins in Uptrend (RSI > 14-day RSI MA)")
+show_only_uptrend = st.checkbox("✅ Show Only Coins in Uptrend (RSI > 14-day MA)")
 
-# === Calculations === #
+# === Calculation === #
 results = []
 
 for coin, prices in price_data.items():
@@ -136,11 +130,9 @@ for coin, prices in price_data.items():
         'trend_up': trend_up
     })
 
-# === Build DataFrame === #
 df = pd.DataFrame(results)
 
-if len(df) >= 5:
-    # Calculate Z-score
+if len(df) >= 2:
     df['z_score'] = (df['pct_change'] - df['pct_change'].mean()) / df['pct_change'].std()
 
     df_display = df.copy()
@@ -148,24 +140,20 @@ if len(df) >= 5:
         df_display = df_display[df_display['trend_up']]
 
     if not df_display.empty:
-        # Sort by Z-score descending
         df_display = df_display.sort_values(by='z_score', ascending=False)
 
-        # === Color Coding Function === #
         def color_z(val):
             color = 'green' if val > 0 else 'red'
             return f'color: {color}'
 
-        # === Display Top 20 (or however many succeeded) === #
-        st.subheader(f"📈 Top {len(df_display)} Coins Ranked by Z-Score of {period_choice} % Change")
+        st.subheader(f"📈 Top {len(df_display)} Coins Ranked by Z-Score ({period_choice})")
         st.dataframe(df_display.style.applymap(color_z, subset=['z_score']))
 
-        # === Download Button === #
         csv = df_display.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📥 Download Data as CSV",
+            label="📥 Download CSV",
             data=csv,
-            file_name='crypto_momentum_screen_top20.csv',
+            file_name='crypto_momentum_top5.csv',
             mime='text/csv',
         )
     else:
