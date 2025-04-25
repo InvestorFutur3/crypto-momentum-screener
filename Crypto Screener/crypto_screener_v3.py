@@ -24,16 +24,13 @@ def get_top_50_coins():
         'sparkline': False
     }
     response = requests.get(url)
-
     if response.status_code != 200:
         st.error("❌ Failed to fetch top coins from CoinGecko API.")
         return []
-
     data = response.json()
     if not isinstance(data, list):
         st.error("❌ Invalid data received from CoinGecko API.")
         return []
-
     coin_ids = [coin['id'] for coin in data]
     return coin_ids
 
@@ -119,13 +116,11 @@ results = []
 for coin, prices in price_data.items():
     prices = np.array(prices)
 
-    # Calculate percent changes
     try:
         pct_change = (prices[-1] - prices[-(selected_period + 1)]) / prices[-(selected_period + 1)] * 100
     except IndexError:
         continue
 
-    # Calculate RSI and RSI 14-day moving average
     rsi = calculate_rsi(prices)
     if len(rsi) < 15:
         continue
@@ -144,11 +139,9 @@ for coin, prices in price_data.items():
 # === Build DataFrame === #
 df = pd.DataFrame(results)
 
-if not df.empty:
-    # Calculate Z-score
+if len(df) >= 5:  # require at least 5 coins
     df['z_score'] = (df['pct_change'] - df['pct_change'].mean()) / df['pct_change'].std()
 
-    # Apply filter if selected
     df_display = df.copy()
     if show_only_uptrend:
         df_display = df_display[df_display['trend_up']]
@@ -157,21 +150,24 @@ if not df.empty:
         # Sort by Z-score descending
         df_display = df_display.sort_values(by='z_score', ascending=False)
 
+        # === Select Top 15 Coins Only === #
+        df_display = df_display.head(15)
+
         # === Color Coding Function === #
         def color_z(val):
             color = 'green' if val > 0 else 'red'
             return f'color: {color}'
 
         # === Display Results === #
-        st.subheader(f"📈 Coins Ranked by Z-Score of {period_choice} % Change")
+        st.subheader(f"📈 Top 15 Coins Ranked by Z-Score of {period_choice} % Change")
         st.dataframe(df_display.style.applymap(color_z, subset=['z_score']))
 
         # === Download Button === #
         csv = df_display.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📥 Download Data as CSV",
+            label="📥 Download Top 15 Data as CSV",
             data=csv,
-            file_name='crypto_momentum_screen.csv',
+            file_name='crypto_momentum_screen_top15.csv',
             mime='text/csv',
         )
     else:
