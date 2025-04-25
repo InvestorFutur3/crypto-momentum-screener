@@ -5,20 +5,24 @@ import numpy as np
 import time
 
 # === 1. Streamlit App Title === #
-st.title("🚀 Crypto Momentum Screener (All 50 Coins with Z-scores)")
+st.title("🚀 Crypto Momentum Screener (Top 50 by Market Cap)")
 
-# === 2. List of 50 popular tokens === #
-COINS = [
-    'bitcoin', 'ethereum', 'binancecoin', 'solana', 'ripple', 'cardano', 'dogecoin', 'polkadot',
-    'tron', 'avalanche-2', 'chainlink', 'uniswap', 'litecoin', 'matic-network', 'internet-computer',
-    'stellar', 'filecoin', 'vechain', 'the-graph', 'aptos', 'algorand', 'render-token', 'kaspa',
-    'arbitrum', 'theta-token', 'aave', 'tezos', 'elrond-erd-2', 'neo', 'optimism', 'eos', 'curve-dao-token',
-    'gala', 'sandbox', 'decentraland', 'chiliz', 'flow', 'quant-network', 'iota', 'mina-protocol',
-    'loopring', '1inch', 'ocean-protocol', 'kava', 'enjincoin', 'bittorrent', 'balancer', 'convex-finance',
-    'zilliqa', 'waves'
-]
+# === 2. Get Top 50 Coins Dynamically === #
+def get_top_50_coins():
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {
+        'vs_currency': 'usd',
+        'order': 'market_cap_desc',
+        'per_page': 50,
+        'page': 1,
+        'sparkline': 'false'
+    }
+    response = requests.get(url)
+    data = response.json()
+    coin_ids = [coin['id'] for coin in data]
+    return coin_ids
 
-# === 3. Function to Fetch Historical Prices === #
+# === 3. Fetch Historical Prices === #
 def fetch_prices(coin_id):
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days=60"
     response = requests.get(url)
@@ -30,21 +34,22 @@ def fetch_prices(coin_id):
         return None
     return prices
 
-# === 4. Fetch All Data with Retry on Failure === #
+# === 4. Load Data with Retry === #
 @st.cache_data
 def load_data():
+    top_coins = get_top_50_coins()
     price_data = {}
     failed_coins = []
 
-    for coin in COINS:
+    for coin in top_coins:
         success = False
-        for attempt in range(3):  # Try up to 3 times
+        for attempt in range(3):  # Try 3 times
             prices = fetch_prices(coin)
             if prices:
                 price_data[coin] = prices
                 success = True
                 break
-            time.sleep(1.5)  # wait before retry
+            time.sleep(1.5)
         if not success:
             failed_coins.append(coin)
 
@@ -84,11 +89,11 @@ df = pd.DataFrame(results)
 for col in ['pct_7', 'pct_14', 'pct_30']:
     df[f'z_{col}'] = (df[col] - df[col].mean()) / df[col].std()
 
-# Combine Z-scores into one "total" score
+# Combine Z-scores
 df['z_total'] = df[['z_pct_7', 'z_pct_14', 'z_pct_30']].mean(axis=1)
 
 # === 6. Streamlit Display === #
-st.subheader("📈 Full Coin List with Z-Scores")
+st.subheader("📈 Top 50 Crypto Coins with Z-Scores")
 
 # Sort Options
 sort_column = st.selectbox("Sort coins by:", options=['z_total', 'z_pct_7', 'z_pct_14', 'z_pct_30'])
@@ -97,14 +102,13 @@ ascending = st.checkbox("Sort Ascending?", value=False)
 # Filter Option: Only Uptrend Coins
 show_only_uptrend = st.checkbox("Show only coins in Uptrend (MA10 > MA30)?", value=False)
 
-# Apply filter
+# Apply filter and sort
 df_display = df.copy()
 if show_only_uptrend:
     df_display = df_display[df_display['trend_up']]
 
-# Apply sort
 df_display = df_display.sort_values(by=sort_column, ascending=ascending)
 
-# Show full table
+# Display Table
 st.dataframe(df_display[['coin', 'pct_7', 'pct_14', 'pct_30', 'z_pct_7', 'z_pct_14', 'z_pct_30', 'z_total', 'trend_up']])
 
