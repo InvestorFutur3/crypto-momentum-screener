@@ -3,9 +3,13 @@ import requests
 import pandas as pd
 import numpy as np
 import time
+from datetime import datetime
 
 # === Title === #
 st.title("🚀 Crypto Momentum Screener (Top 50 by Market Cap)")
+
+# === Timestamp === #
+st.write(f"🕓 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 # === Functions === #
 
@@ -136,7 +140,21 @@ if show_only_uptrend:
 # Sort by Z-score descending
 df_display = df_display.sort_values(by='z_score', ascending=False)
 
+# === Color Coding Function === #
+def color_z(val):
+    color = 'green' if val > 0 else 'red'
+    return f'color: {color}'
+
 # === Display Results === #
 st.subheader(f"📈 Coins Ranked by Z-Score of {period_choice} % Change")
-st.dataframe(df_display[['coin', 'pct_change', 'z_score', 'rsi', 'rsi_ma14', 'trend_up']])
+st.dataframe(df_display.style.applymap(color_z, subset=['z_score']))
 
+# === Download Button === #
+csv = df_display.to_csv(index=False).encode('utf-8')
+
+st.download_button(
+    label="📥 Download Data as CSV",
+    data=csv,
+    file_name='crypto_momentum_screen.csv',
+    mime='text/csv',
+)
