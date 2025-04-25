@@ -138,13 +138,39 @@ for coin, prices in price_data.items():
 
 df = pd.DataFrame(results)
 
-# Calculate Z-score
-df['z_score'] = (df['pct_change'] - df['pct_change'].mean()) / df['pct_change'].std()
+if not df.empty:
+    # Calculate Z-score
+    df['z_score'] = (df['pct_change'] - df['pct_change'].mean()) / df['pct_change'].std()
 
-# Apply filter if selected
-df_display = df.copy()
-if show_only_uptrend:
-    df_display = df_display[df_display['trend_up']]
+    # Apply filter if selected
+    df_display = df.copy()
+    if show_only_uptrend:
+        df_display = df_display[df_display['trend_up']]
+
+    # Sort by Z-score descending
+    df_display = df_display.sort_values(by='z_score', ascending=False)
+
+    # === Color Coding Function === #
+    def color_z(val):
+        color = 'green' if val > 0 else 'red'
+        return f'color: {color}'
+
+    # === Display Results === #
+    st.subheader(f"📈 Coins Ranked by Z-Score of {period_choice} % Change")
+    st.dataframe(df_display.style.applymap(color_z, subset=['z_score']))
+
+    # === Download Button === #
+    csv = df_display.to_csv(index=False).encode('utf-8')
+
+    st.download_button(
+        label="📥 Download Data as CSV",
+        data=csv,
+        file_name='crypto_momentum_screen.csv',
+        mime='text/csv',
+    )
+else:
+    st.error("❌ No valid data available. Please try again later.")
+
 
 # Sort by Z-score descending
 df_display = df_display.sort_values(by='z_score', ascending=False)
