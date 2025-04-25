@@ -13,7 +13,7 @@ st.write(f"🕓 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 # === Functions === #
 
-# Get Top 50 coins by market cap
+# Get Top 50 coins by market cap (Safe version)
 def get_top_50_coins():
     url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {
@@ -24,7 +24,16 @@ def get_top_50_coins():
         'sparkline': False
     }
     response = requests.get(url)
+
+    if response.status_code != 200:
+        st.error("❌ Failed to fetch top coins from CoinGecko API.")
+        return []
+
     data = response.json()
+    if not isinstance(data, list):
+        st.error("❌ Invalid data received from CoinGecko API.")
+        return []
+
     coin_ids = [coin['id'] for coin in data]
     return coin_ids
 
