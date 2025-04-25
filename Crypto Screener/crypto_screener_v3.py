@@ -6,24 +6,47 @@ from datetime import datetime
 import time
 
 # === Title === #
-st.title("🚀 Crypto Momentum Screener (Test Version - Bitcoin Only)")
+st.title("🚀 Crypto Momentum Screener (Top 20 by Market Cap)")
 
 # === Timestamp === #
 st.write(f"🕓 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-# === Fetch Bitcoin Prices === #
-@st.cache_data
-def fetch_bitcoin_prices():
-    url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=30&interval=daily"
+# === Functions === #
+
+# Get Top 20 coins by market cap
+def get_top_20_coins():
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {
+        'vs_currency': 'usd',
+        'order': 'market_cap_desc',
+        'per_page': 20,
+        'page': 1,
+        'sparkline': False
+    }
     response = requests.get(url)
     if response.status_code != 200:
-        st.error("❌ Failed to fetch Bitcoin data from CoinGecko API.")
+        st.error("❌ Failed to fetch top coins from CoinGecko API.")
+        return []
+    data = response.json()
+    if not isinstance(data, list):
+        st.error("❌ Invalid data received from CoinGecko API.")
+        return []
+    coin_ids = [coin['id'] for coin in data]
+    return coin_ids
+
+# Fetch historical prices for each coin
+def fetch_prices(coin_id):
+    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days=30&interval=daily"
+    response = requests.get(url)
+    if response.status_code != 200:
         return None
     data = response.json()
     prices = [price[1] for price in data['prices']]
+    if len(prices) < 30:
+        return None
     return prices
 
-# === Calculate RSI === #
+# Calculate RSI
 def calculate_rsi(prices, period=14):
     deltas = np.diff(prices)
     seed = deltas[:period]
@@ -44,55 +67,108 @@ def calculate_rsi(prices, period=14):
 
     return rsi
 
-# === Main Process === #
-prices = fetch_bitcoin_prices()
+# Load data
+@st.cache_data
+def load_data():
+    top_coins = get_top_20_coins()
+    price_data = {}
+    failed_coins = []
 
-if prices and len(prices) >= 30:
+    for coin in top_coins:
+        success = False
+        for attempt in range(3):
+            prices = fetch_prices(coin)
+            if prices:
+                price_data[coin] = prices
+                success = True
+                break
+            time.sleep(1.5)
+        if not success:
+            failed_coins.append(coin)
+
+    return price_data, failed_coins
+
+# === Load Data === #
+price_data, failed_coins = load_data()
+
+if failed_coins:
+    st.warning(f"⚠️ Failed to load data for {len(failed_coins)} coins:")
+    st.write(failed_coins)
+
+# === Sidebar Selections === #
+period_choice = st.selectbox(
+    "Select Percentage Change Period to Analyze:",
+    ("7 Days", "14 Days", "30 Days")
+)
+
+period_map = {
+    "7 Days": 7,
+    "14 Days": 14,
+    "30 Days": 30
+}
+selected_period = period_map[period_choice]
+
+show_only_uptrend = st.checkbox("✅ Show Only Coins in Uptrend (RSI > 14-day RSI MA)")
+
+# === Calculations === #
+results = []
+
+for coin, prices in price_data.items():
     prices = np.array(prices)
-    
-    st.success("✅ Successfully fetched Bitcoin data!")
-    
-    period_choice = st.selectbox(
-        "Select Percentage Change Period:",
-        ("7 Days", "14 Days", "30 Days")
-    )
-    
-    period_map = {"7 Days": 7, "14 Days": 14, "30 Days": 30}
-    selected_period = period_map[period_choice]
-    
-    pct_change = (prices[-1] - prices[-(selected_period + 1)]) / prices[-(selected_period + 1)] * 100
-    
+
+    try:
+        pct_change = (prices[-1] - prices[-(selected_period + 1)]) / prices[-(selected_period + 1)] * 100
+    except IndexError:
+        continue
+
     rsi = calculate_rsi(prices)
+    if len(rsi) < 15:
+        continue
     rsi_current = rsi[-1]
     rsi_ma14 = pd.Series(rsi).rolling(window=14).mean().iloc[-1]
     trend_up = rsi_current > rsi_ma14
-    
-    result = {
-        "Coin": "Bitcoin",
-        "Percent Change": pct_change,
-        "RSI": rsi_current,
-        "RSI_MA14": rsi_ma14,
-        "Trend Up (RSI > MA14)": trend_up
-    }
-    
-    df = pd.DataFrame([result])
 
-    # Color coding function
-    def color_pct(val):
-        color = 'green' if val > 0 else 'red'
-        return f'color: {color}'
-    
-    st.subheader("📈 Bitcoin Momentum Result")
-    st.dataframe(df.style.applymap(color_pct, subset=['Percent Change']))
+    results.append({
+        'coin': coin,
+        'pct_change': pct_change,
+        'rsi': rsi_current,
+        'rsi_ma14': rsi_ma14,
+        'trend_up': trend_up
+    })
 
-    # Download CSV
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Download Data as CSV",
-        data=csv,
-        file_name='bitcoin_momentum_test.csv',
-        mime='text/csv',
-    )
+# === Build DataFrame === #
+df = pd.DataFrame(results)
+
+if len(df) >= 5:
+    # Calculate Z-score
+    df['z_score'] = (df['pct_change'] - df['pct_change'].mean()) / df['pct_change'].std()
+
+    df_display = df.copy()
+    if show_only_uptrend:
+        df_display = df_display[df_display['trend_up']]
+
+    if not df_display.empty:
+        # Sort by Z-score descending
+        df_display = df_display.sort_values(by='z_score', ascending=False)
+
+        # === Color Coding Function === #
+        def color_z(val):
+            color = 'green' if val > 0 else 'red'
+            return f'color: {color}'
+
+        # === Display Top 20 (or however many succeeded) === #
+        st.subheader(f"📈 Top {len(df_display)} Coins Ranked by Z-Score of {period_choice} % Change")
+        st.dataframe(df_display.style.applymap(color_z, subset=['z_score']))
+
+        # === Download Button === #
+        csv = df_display.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Data as CSV",
+            data=csv,
+            file_name='crypto_momentum_screen_top20.csv',
+            mime='text/csv',
+        )
+    else:
+        st.warning("⚠️ No coins passed the uptrend filter.")
 else:
-    st.error("❌ Could not load Bitcoin prices. Try again later.")
-
+    st.error("❌ No valid data available. Please try again later.")
