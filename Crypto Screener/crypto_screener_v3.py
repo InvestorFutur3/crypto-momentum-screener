@@ -1,90 +1,94 @@
-# crypto_screen.py
 import streamlit as st
-import pandas as pd
 import requests
-from ta.momentum import RSIIndicator
-from datetime import datetime, timedelta
+import pandas as pd
 import numpy as np
+import time
 
-st.set_page_config(page_title="Top Crypto Screener", layout="wide")
-st.title("📊 Top 5 Cryptos by Z-Scored % Change (14D) w/ RSI Filter")
+# === 1. Streamlit App Title === #
+st.title("🚀 Crypto Momentum Screener (Full List)")
 
-# === Settings ===
-NUM_COINS = 20
-Z_PERIOD = 14
-RSI_PERIOD = 14
+# === 2. List of 50 popular tokens === #
+COINS = [
+    'bitcoin', 'ethereum', 'binancecoin', 'solana', 'ripple', 'cardano', 'dogecoin', 'polkadot',
+    'tron', 'avalanche', 'chainlink', 'uniswap', 'litecoin', 'matic-network', 'internet-computer',
+    'stellar', 'filecoin', 'vechain', 'the-graph', 'aptos', 'algorand', 'render-token', 'aave',
+    'arbitrum', 'theta-token', 'aave', 'tezos', 'stellar', 'neo', 'optimism', 'eos', 'curve-dao-token',
+    'sui', 'sandbox', 'decentraland', 'chiliz', 'flow', 'quant-network', 'iota', 'mina-protocol',
+    'loopring', '1inch', 'ocean-protocol', 'kava', 'enjincoin', 'ondo', 'balancer', 'official-trump',
+    'zilliqa', 'waves'
+]
 
-# === Fetch top 20 crypto coins by market cap ===
-@st.cache_data(ttl=3600)
-def get_top_20():
-    url = "https://api.coingecko.com/api/v3/coins/markets"
-    params = {
-        'vs_currency': 'usd',
-        'order': 'market_cap_desc',
-        'per_page': NUM_COINS,
-        'page': 1,
-        'sparkline': False
-    }
-    response = requests.get(url, params=params)
-    data = response.json()
-    return [coin['id'] for coin in data]
-
-# === Fetch historical prices and compute metrics ===
-@st.cache_data(ttl=3600)
-def get_coin_data(coin_id):
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
-    params = {
-        'vs_currency': 'usd',
-        'days': Z_PERIOD + 30,
-        'interval': 'daily'
-    }
-    response = requests.get(url, params=params)
-    data = response.json()
-
-    if 'prices' not in data:
+# === 3. Fetch historical prices === #
+def fetch_prices(coin_id):
+    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days=60"
+    response = requests.get(url)
+    if response.status_code != 200:
         return None
-
-    df = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
-    df['date'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df.set_index('date', inplace=True)
-    df = df[['price']]
-
-    if len(df) < RSI_PERIOD + Z_PERIOD:
+    data = response.json()
+    prices = [price[1] for price in data['prices']]
+    if len(prices) < 60:
         return None
+    return prices
 
-    df['pct_change_14d'] = df['price'].pct_change(Z_PERIOD) * 100
-    df['rsi'] = RSIIndicator(df['price'], window=RSI_PERIOD).rsi()
-    df['rsi_ma'] = df['rsi'].rolling(RSI_PERIOD).mean()
+# === 4. Fetch all data === #
+@st.cache_data
+def load_data():
+    price_data = {}
+    for coin in COINS:
+        prices = fetch_prices(coin)
+        if prices:
+            price_data[coin] = prices
+        time.sleep(1.2)  # Respect API rate limit
+    return price_data
 
-    latest = df.dropna().iloc[-1]
-    return {
-        'coin': coin_id,
-        '14d_pct_change': latest['pct_change_14d'],
-        'zscore_placeholder': 0,
-        'rsi': latest['rsi'],
-        'rsi_ma': latest['rsi_ma']
-    }
+price_data = load_data()
 
-# === Run Screener ===
-st.write("⏳ Loading data...")
-top_coins = get_top_20()
-
+# === 5. Calculate percent changes and z-scores === #
 results = []
-for coin_id in top_coins:
-    metrics = get_coin_data(coin_id)
-    if metrics:
-        results.append(metrics)
+for coin, prices in price_data.items():
+    prices = np.array(prices)
+    pct_7 = (prices[-1] - prices[-8]) / prices[-8] * 100
+    pct_14 = (prices[-1] - prices[-15]) / prices[-15] * 100
+    pct_30 = (prices[-1] - prices[-31]) / prices[-31] * 100
+
+    ma10 = np.mean(prices[-10:])
+    ma30 = np.mean(prices[-30:])
+    trend_up = ma10 > ma30
+
+    results.append({
+        'coin': coin,
+        'pct_7': pct_7,
+        'pct_14': pct_14,
+        'pct_30': pct_30,
+        'ma10': ma10,
+        'ma30': ma30,
+        'trend_up': trend_up
+    })
 
 df = pd.DataFrame(results)
 
-# === Filter RSI > RSI MA ===
-df = df[df['rsi'] > df['rsi_ma']]
+# Calculate Z-scores
+for col in ['pct_7', 'pct_14', 'pct_30']:
+    df[f'z_{col}'] = (df[col] - df[col].mean()) / df[col].std()
 
-# === Z-score on 14-day % change ===
-df['zscore'] = (df['14d_pct_change'] - df['14d_pct_change'].mean()) / df['14d_pct_change'].std()
+# Combine Z-scores into one average total score
+df['z_total'] = df[['z_pct_7', 'z_pct_14', 'z_pct_30']].mean(axis=1)
 
-# === Top 5 by Z-score ===
-top5 = df.sort_values(by='zscore', ascending=False).head(5)
+# === 6. Display All 50 Coins === #
+st.subheader("📈 Full Coin List with Z-scores")
 
-st.subheader("🚀 Top 5 Coins (RSI > RSI MA)")
-st.dataframe(top5[['coin', '14d_pct_change', 'zscore', 'rsi', 'rsi_ma']].round(2), use_container_width=True)
+# Choose sort options
+sort_column = st.selectbox("Sort by:", options=['z_total', 'z_pct_7', 'z_pct_14', 'z_pct_30'])
+ascending = st.checkbox("Sort Ascending?", value=False)
+
+# Filter to only uptrend coins (optional)
+show_only_uptrend = st.checkbox("Show only coins in Uptrend (MA10 > MA30)?", value=False)
+
+if show_only_uptrend:
+    df = df[df['trend_up']]
+
+# Sort DataFrame
+df_sorted = df.sort_values(by=sort_column, ascending=ascending)
+
+# Show nicely in app
+st.dataframe(df_sorted[['coin', 'pct_7', 'pct_14', 'pct_30', 'z_pct_7', 'z_pct_14', 'z_pct_30', 'z_total', 'trend_up']])
